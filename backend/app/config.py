@@ -1,5 +1,3 @@
-# config.py
-
 # Frequency ranges used by the motion analysis pipeline
 FREQ_PRESETS = {
     "engine": {

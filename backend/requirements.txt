@@ -1,0 +1,9 @@
+opencv-python==4.13.0.92
+numpy==2.3.5
+scipy==1.16.3
+
+fastapi==0.115.0
+uvicorn==0.32.0
+python-multipart==0.0.12
+sqlalchemy==2.0.35
+pydantic==2.9.2
