@@ -1,10 +1,19 @@
 import sys
 sys.path.insert(0, '.')
-from app.io.video_io import read_video_frames
-from app.analytics.vibration import analyze_vibration
+sys.path.insert(0, '../test_clips')
+import numpy as np
+from generate_test_clips import vibrating_clip, static_clip, FPS, N_FRAMES
+from app.analytics.vibration import compute_motion_signal, compute_fft_spectrum
 
-for name in ['vibrating_panel', 'static_panel', 'camera_shake']:
-    frames, fps = read_video_frames(f'../test_clips/{name}.mp4')
-    result = analyze_vibration(frames, fps, low_hz=10, high_hz=20)
-    print(f"\n--- {name} ---")
-    print(result["metrics"])
+np.random.seed(0)
+
+def build_raw_frames(frame_fn):
+    return np.stack([frame_fn(i) for i in range(N_FRAMES)]).astype(np.float32)
+
+for name, frame_fn in [('vibrating_panel', vibrating_clip()), ('static_panel', static_clip())]:
+    raw_frames = build_raw_frames(frame_fn)
+    sig = compute_motion_signal(raw_frames, roi=None)
+    freqs, amp = compute_fft_spectrum(sig, FPS)
+    valid = freqs > 0.1
+    peak_freq = freqs[valid][np.argmax(amp[valid])]
+    print(f"{name}: RAW frames (no mp4 round-trip) -> true peak = {peak_freq:.3f} Hz")
