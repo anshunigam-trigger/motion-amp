@@ -7,10 +7,15 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from app.io.video_io import read_video_frames, write_video
+from app.core.pipeline import run_phase_based_evm
+from app.analytics.vibration import analyze_vibration
+
 
 from app import db
 from app.config import (
     UPLOAD_DIR,
+    RESULTS_DIR,
     ALLOWED_VIDEO_EXTENSIONS,
     FREQ_PRESETS,
     DEFAULT_ALPHA,
@@ -219,6 +224,40 @@ def run_processing_stub(job_id: str):
         )
 
 
+def run_processing(job_id: str):
+    try:
+        filename, roi_x, roi_y, roi_w, roi_h, low_hz, high_hz, alpha = db.get_job_settings(job_id)
+
+        ext = os.path.splitext(filename)[1].lower()
+        saved_path = os.path.join(UPLOAD_DIR, f"{job_id}{ext}")
+
+        frames, fps = read_video_frames(saved_path)
+
+        roi_frames = frames[:, roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
+
+        amplified = run_phase_based_evm(roi_frames, fps, low_hz=low_hz, high_hz=high_hz, alpha=alpha)
+
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        result_path = os.path.join(RESULTS_DIR, f"{job_id}_amplified.mp4")
+        write_video(result_path, amplified, fps)
+
+        analysis = analyze_vibration(amplified, fps, roi=None, low_hz=low_hz, high_hz=high_hz)
+
+        flag = "periodic_vibration_detected" if analysis["metrics"]["detected"] else "no_vibration_detected"
+
+        db.save_job_result(
+            job_id=job_id,
+            video_path=result_path,
+            dominant_freq=analysis["metrics"]["dominant_frequency_hz"],
+            intensity_series_json=json.dumps(analysis["time_series"]["motion_intensity"]),
+            flag=flag,
+        )
+
+    except Exception as error:
+        db.mark_job_failed(job_id)
+        print(f"Processing failed for job {job_id}: {error}")
+
+    
 @app.post("/api/jobs/{job_id}/process")
 def process_job(
     job_id: str,
@@ -302,7 +341,7 @@ def process_job(
 
     # Run the processing in the background
     background_tasks.add_task(
-        run_processing_stub,
+        run_processing,
         job_id
     )
 

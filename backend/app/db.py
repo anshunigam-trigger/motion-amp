@@ -215,6 +215,30 @@ def get_job_by_id(job_id: str):
     return row
 
 
+def get_job_settings(job_id: str):
+    """
+    Returns everything needed to actually RUN the pipeline for a job:
+    the uploaded filename, the ROI box, the frequency band, and alpha.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            filename,
+            roi_x, roi_y, roi_w, roi_h,
+            band_low_hz, band_high_hz,
+            alpha
+        FROM jobs
+        WHERE job_id = ?
+    """, (job_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row
+
+
 def get_all_jobs():
     """Returns a summary of all jobs, newest first."""
     conn = get_connection()
