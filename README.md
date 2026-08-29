@@ -40,16 +40,16 @@
 
 ## 📖 What This Project Does
 
-Some vibrations are too small to see with the naked eye — a sub-pixel flutter
+Some vibrations are too small to see with the naked eye - a sub-pixel flutter
 on a panel, an engine housing, a structural joint. This system takes ordinary
 video, **amplifies motion that's otherwise invisible**, and then
 **mathematically verifies** whether what it found is a genuine, periodic
-vibration — not just camera shake, sensor noise, or a coincidence.
+vibration not just camera shake, sensor noise, or a coincidence.
 
 It uses **phase-based Eulerian Video Magnification** (the same family of
 technique developed at MIT) combined with **FFT-based frequency analysis**
 and a statistical peak-detection test, so the system doesn't just show you
-*something moved* — it tells you *whether that motion is real, and at what
+*something moved* it tells you *whether that motion is real, and at what
 frequency.*
 
 ---
@@ -57,7 +57,7 @@ frequency.*
 ## 🎯 The Problem It Solves
 
 Vibration analysis usually needs physical sensors (accelerometers,
-laser vibrometers) mounted directly on whatever you're monitoring — not
+laser vibrometers) mounted directly on whatever you're monitoring not
 always practical, safe, or possible at a distance. This system instead
 works from **video alone**, making it useful anywhere a camera can see but
 a sensor can't easily be attached:
@@ -69,7 +69,7 @@ a sensor can't easily be attached:
 The system is built around two honest, hard-won design principles from our
 own testing (see [Validation Results](#-validation--real-end-to-end-test-results)):
 **amplitude alone is not proof of a real signal**, and **frequency alone is
-not proof of a real signal either** — both can be fooled by noise. Only a
+not proof of a real signal either** both can be fooled by noise. Only a
 combination of *targeted frequency filtering* and a *statistical sharpness
 test* reliably tells real vibration apart from noise, which is why both are
 built into the core detection logic, not bolted on as an afterthought.
