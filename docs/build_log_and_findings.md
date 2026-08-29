@@ -2,7 +2,7 @@
 
 This document is a plain-language record of everything we did while building the
 core (backend) part of this project. It's written the way we'd actually explain
-it to someone, not like a formal report — the goal is that anyone on the team
+it to someone, not like a formal report the goal is that anyone on the team
 (or a judge) can read this and understand exactly what works, what doesn't, and
 why we made the choices we made.
 
@@ -34,7 +34,7 @@ moving to the next one, instead of writing everything at once and hoping it work
 
 ## 2. Why we made fake test videos instead of using real footage
 
-Real vibration is invisible to the eye — that's the whole point of the project.
+Real vibration is invisible to the eye that's the whole point of the project.
 So there's no easy way to look at real footage and just "know" if our system got
 the right answer.
 

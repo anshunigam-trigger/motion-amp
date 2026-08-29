@@ -1,7 +1,21 @@
 # Python
-backend/venv/
 __pycache__/
 *.pyc
+.venv/
+venv/
+
+# Database
+*.db
+
+# Uploaded/test videos
+backend/uploads/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Generated ML results
+backend/results/
 
 # Environment
 .env
