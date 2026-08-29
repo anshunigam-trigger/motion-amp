@@ -222,7 +222,7 @@
           <p class="drop-sub">or click to browse files</p>
           <p class="drop-formats">MP4 &bull; MOV &bull; AVI &bull; MKV — Up to 2 GB</p>
         </div>
-        <div class="dropzone-preview" id="dropzonePreview" style="display:none">
+        <div class="dropzone-preview" id="dropzonePreview" style="display:none" onclick="event.stopPropagation()">
           <video id="videoPreview" controls playsinline preload="metadata"></video>
           <div class="file-info" id="fileInfo"></div>
         </div>
@@ -412,7 +412,7 @@
       <div class="video-panel-wrap">
         <div class="video-panel">
           <div class="video-panel-label">ORIGINAL FOOTAGE</div>
-          <div class="video-placeholder original-video">
+          <div class="video-placeholder original-video" id="originalVideoPlaceholder">
             <div class="video-overlay-grid"></div>
             <svg viewBox="0 0 160 220" class="demo-tower">
               <line x1="80" y1="14" x2="28" y2="200" stroke="#4a6080" stroke-width="2.5"/>

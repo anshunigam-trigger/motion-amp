@@ -78,12 +78,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+/* ── STATE ── */
+let currentFile = null;
+let currentJobId = null;
+let currentRoi = null;
+
 function handleFileSelect(e) {
   const file = e.target.files[0];
   if (file) loadVideo(file);
 }
 
 function loadVideo(file) {
+  currentFile = file;
   const preview = document.getElementById('videoPreview');
   const info    = document.getElementById('fileInfo');
   const content = document.getElementById('dropzoneContent');
@@ -93,6 +99,9 @@ function loadVideo(file) {
 
   const url = URL.createObjectURL(file);
   preview.src = url;
+  preview.type = file.type || 'video/mp4';
+  preview.load();
+  
   content.style.display = 'none';
   previewWrap.style.display = 'block';
   info.textContent = `${file.name}  ·  ${(file.size / (1024*1024)).toFixed(1)} MB`;
@@ -128,6 +137,7 @@ function initROICanvas() {
 
   /* Initial ROI: 30% inset */
   let roi = { x: W * 0.28, y: H * 0.18, w: W * 0.44, h: H * 0.64 };
+  currentRoi = roi;
   let dragging = null;
   const HANDLE_R = 7;
 
@@ -141,9 +151,14 @@ function initROICanvas() {
   }
 
   function draw() {
-    /* Grid background */
-    ctx.fillStyle = '#1A2B3C';
-    ctx.fillRect(0, 0, W, H);
+    const video = document.getElementById('videoPreview');
+    if (video && video.readyState >= 2) {
+      ctx.drawImage(video, 0, 0, W, H);
+    } else {
+      ctx.fillStyle = '#1A2B3C';
+      ctx.fillRect(0, 0, W, H);
+    }
+
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let x = 0; x < W; x += 24) {
@@ -230,56 +245,161 @@ function initROICanvas() {
   canvas.addEventListener('mouseup', () => dragging = null);
   canvas.addEventListener('mouseleave', () => dragging = null);
 
-  draw();
+  cancelAnimationFrame(window._roiRaf);
+  function renderLoop() {
+    if (document.getElementById('page-upload').classList.contains('active')) {
+      draw();
+      window._roiRaf = requestAnimationFrame(renderLoop);
+    }
+  }
+  renderLoop();
 }
 
 /* ── ANALYSIS START / PROCESSING ── */
-function startAnalysis() {
+async function startAnalysis() {
   const btn = document.getElementById('startBtn');
-  if (!btn.classList.contains('active')) return;
+  if (!btn.classList.contains('active') || !currentFile) return;
 
   const overlay = document.getElementById('processingOverlay');
   overlay.style.display = 'flex';
-
-  const steps = [
-    'Decomposing spatial frequencies…',
-    'Extracting local phase per sub-band…',
-    'Applying Butterworth band-pass filter…',
-    'Amplifying phase components (×8)…',
-    'Reconstructing frames…',
-    'Running FFT vibration analysis…',
-    'Identifying dominant frequency…',
-    'Generating report…',
-  ];
-  let stepIdx = 0;
+  
   const stepEl = document.getElementById('processingStep');
   const barEl  = document.getElementById('processingBar');
-
-  const totalMs = 3800;
-  const interval = totalMs / steps.length;
-  let elapsed = 0;
-
-  const timer = setInterval(() => {
-    elapsed += interval;
-    const pct = Math.min((elapsed / totalMs) * 100, 100);
-    barEl.style.width = pct + '%';
-    if (stepIdx < steps.length) {
-      stepEl.textContent = steps[stepIdx++];
+  
+  try {
+    stepEl.textContent = 'Uploading video...';
+    barEl.style.width = '10%';
+    
+    const formData = new FormData();
+    formData.append('file', currentFile);
+    
+    let res = await fetch('http://localhost:8000/api/upload', {
+      method: 'POST',
+      body: formData
+    });
+    if (!res.ok) throw new Error('Upload failed');
+    const uploadData = await res.json();
+    currentJobId = uploadData.job_id;
+    
+    stepEl.textContent = 'Setting Region of Interest...';
+    barEl.style.width = '30%';
+    
+    const video = document.getElementById('videoPreview');
+    const scaleX = video.videoWidth ? video.videoWidth / 590 : 1;
+    const scaleY = video.videoHeight ? video.videoHeight / 280 : 1;
+    
+    const activePreset = document.querySelector('.preset-item.active');
+    let presetName = 'custom';
+    if (activePreset.innerText.includes('Engine')) presetName = 'engine';
+    else if (activePreset.innerText.includes('Structural')) presetName = 'structural';
+    
+    let low_hz = null, high_hz = null;
+    if (presetName === 'custom') {
+      const inputs = document.querySelectorAll('#customRangeInputs input');
+      low_hz = parseFloat(inputs[0].value) || 1;
+      high_hz = parseFloat(inputs[1].value) || 100;
     }
-    if (elapsed >= totalMs) {
-      clearInterval(timer);
-      setTimeout(() => {
-        overlay.style.display = 'none';
-        showPage('results');
-      }, 400);
+    
+    const roiPayload = {
+      x: Math.round(currentRoi.x * scaleX),
+      y: Math.round(currentRoi.y * scaleY),
+      w: Math.round(currentRoi.w * scaleX),
+      h: Math.round(currentRoi.h * scaleY),
+      preset: presetName,
+      low_hz: low_hz,
+      high_hz: high_hz
+    };
+    
+    res = await fetch(`http://localhost:8000/api/jobs/${currentJobId}/roi`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(roiPayload)
+    });
+    if (!res.ok) throw new Error('Failed to save ROI');
+    
+    stepEl.textContent = 'Processing motion amplification...';
+    barEl.style.width = '50%';
+    
+    res = await fetch(`http://localhost:8000/api/jobs/${currentJobId}/process`, {
+      method: 'POST'
+    });
+    if (!res.ok) throw new Error('Failed to start processing');
+    
+    let isDone = false;
+    let pollCount = 0;
+    while (!isDone) {
+      await new Promise(r => setTimeout(r, 1000));
+      pollCount++;
+      barEl.style.width = Math.min(50 + pollCount * 5, 90) + '%';
+      
+      const statusRes = await fetch(`http://localhost:8000/api/jobs/${currentJobId}/status`);
+      const statusData = await statusRes.json();
+      
+      if (statusData.status === 'done') {
+        isDone = true;
+      } else if (statusData.status === 'failed') {
+        throw new Error('Processing failed on server');
+      }
     }
-  }, interval);
+    
+    barEl.style.width = '95%';
+    stepEl.textContent = 'Fetching results...';
+    
+    const resultRes = await fetch(`http://localhost:8000/api/jobs/${currentJobId}/result`);
+    const resultData = await resultRes.json();
+    
+    window._latestResultData = resultData;
+    
+    barEl.style.width = '100%';
+    setTimeout(() => {
+      overlay.style.display = 'none';
+      showPage('results');
+    }, 400);
+    
+  } catch (err) {
+    console.error(err);
+    alert('An error occurred: ' + err.message);
+    overlay.style.display = 'none';
+  }
 }
 
 /* ══════════════════════════════════════════════════
    PAGE 3: RESULTS
 ══════════════════════════════════════════════════ */
 function initResultsPage() {
+  if (window._latestResultData) {
+    const data = window._latestResultData;
+    
+    const statusRow = document.querySelector('.vibration-status');
+    if (data.flag === 'periodic_vibration_detected') {
+      statusRow.classList.add('detected');
+      statusRow.innerHTML = '<span class="status-dot"></span>VIBRATION DETECTED';
+    } else {
+      statusRow.classList.remove('detected');
+      statusRow.innerHTML = '<span class="status-dot"></span>NO VIBRATION';
+    }
+    
+    const origPlaceholder = document.getElementById('originalVideoPlaceholder');
+    if (origPlaceholder && currentFile) {
+      let v = origPlaceholder.querySelector('video');
+      if (!v) {
+        v = document.createElement('video');
+        v.style.width = '100%';
+        v.style.height = '100%';
+        v.style.objectFit = 'cover';
+        v.style.position = 'absolute';
+        v.style.top = '0';
+        v.style.left = '0';
+        v.style.zIndex = '0';
+        v.controls = true;
+        v.loop = true;
+        origPlaceholder.insertBefore(v, origPlaceholder.firstChild);
+      }
+      v.src = URL.createObjectURL(currentFile);
+      v.play().catch(() => {});
+    }
+  }
+
   animateFreqNumber();
   animateResultWave();
   drawVibrationChart();
@@ -289,7 +409,7 @@ function initResultsPage() {
 function animateFreqNumber() {
   const el = document.getElementById('freqNumber');
   if (!el) return;
-  const target = 18.4;
+  const target = window._latestResultData ? window._latestResultData.dominant_freq_hz : 18.4;
   let current  = 0;
   const duration = 900;
   const start  = performance.now();
@@ -343,11 +463,18 @@ function drawVibrationChart() {
   canvas.width  = W;
   canvas.height = H;
 
-  const N = 120;
-  const data = generateVibrationData(N);
+  let data;
+  let N;
+  if (window._latestResultData && window._latestResultData.intensity_series) {
+    data = window._latestResultData.intensity_series;
+    N = data.length;
+  } else {
+    N = 120;
+    data = generateVibrationData(N);
+  }
   const baseline = generateBaselineData(N);
 
-  const maxVal = Math.max(...data);
+  const maxVal = Math.max(...data, 1);
 
   function xOf(i) { return (i / (N - 1)) * W; }
   function yOf(v) { return H - 10 - (v / maxVal) * (H - 20); }
