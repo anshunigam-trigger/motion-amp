@@ -73,10 +73,14 @@ def find_dominant_frequency(
     high_hz: Optional[float] = None,
 ) -> Tuple[float, float]:
     mask = freqs > 0.1
+    nyquist = freqs[-1] if len(freqs) > 0 else 0
+    
     if low_hz is not None:
-        mask &= freqs >= low_hz
+        clamped_low = min(low_hz, nyquist - 0.2)
+        mask &= freqs >= clamped_low
     if high_hz is not None:
-        mask &= freqs <= high_hz
+        clamped_high = min(high_hz, nyquist - 0.1)
+        mask &= freqs <= clamped_high
 
     if not np.any(mask):
         raise ValueError(f"No frequency bins found in range [{low_hz}, {high_hz}] Hz.")

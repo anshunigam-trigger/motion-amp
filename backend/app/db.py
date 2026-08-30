@@ -15,7 +15,6 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Stores information about every uploaded video/job
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             job_id TEXT PRIMARY KEY,
@@ -33,13 +32,13 @@ def init_db():
         )
     """)
 
-    # Stores the final analysis result for a completed job
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS results (
             job_id TEXT PRIMARY KEY,
             amplified_video_path TEXT,
             dominant_freq_hz REAL,
             intensity_series_json TEXT,
+            spectrum_json TEXT,
             flag TEXT,
             FOREIGN KEY (job_id) REFERENCES jobs (job_id)
         )
@@ -71,31 +70,11 @@ def create_job(
 
     cursor.execute("""
         INSERT INTO jobs (
-            job_id,
-            filename,
-            roi_x,
-            roi_y,
-            roi_w,
-            roi_h,
-            freq_preset,
-            band_low_hz,
-            band_high_hz,
-            alpha,
-            status
+            job_id, filename, roi_x, roi_y, roi_w, roi_h,
+            freq_preset, band_low_hz, band_high_hz, alpha, status
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued')
-    """, (
-        job_id,
-        filename,
-        rx,
-        ry,
-        rw,
-        rh,
-        preset,
-        low_hz,
-        high_hz,
-        alpha
-    ))
+    """, (job_id, filename, rx, ry, rw, rh, preset, low_hz, high_hz, alpha))
 
     conn.commit()
     conn.close()
@@ -115,26 +94,10 @@ def update_job_roi(
 
     cursor.execute("""
         UPDATE jobs
-        SET roi_x = ?,
-            roi_y = ?,
-            roi_w = ?,
-            roi_h = ?,
-            freq_preset = ?,
-            band_low_hz = ?,
-            band_high_hz = ?,
-            alpha = ?
+        SET roi_x = ?, roi_y = ?, roi_w = ?, roi_h = ?,
+            freq_preset = ?, band_low_hz = ?, band_high_hz = ?, alpha = ?
         WHERE job_id = ?
-    """, (
-        roi["x"],
-        roi["y"],
-        roi["w"],
-        roi["h"],
-        preset,
-        low_hz,
-        high_hz,
-        alpha,
-        job_id
-    ))
+    """, (roi["x"], roi["y"], roi["w"], roi["h"], preset, low_hz, high_hz, alpha, job_id))
 
     conn.commit()
     conn.close()
@@ -145,6 +108,7 @@ def save_job_result(
     video_path: str,
     dominant_freq: float,
     intensity_series_json: str,
+    spectrum_json: str,
     flag: str
 ):
     """Stores the final result and marks the job as done."""
@@ -153,20 +117,11 @@ def save_job_result(
 
     cursor.execute("""
         INSERT INTO results (
-            job_id,
-            amplified_video_path,
-            dominant_freq_hz,
-            intensity_series_json,
-            flag
+            job_id, amplified_video_path, dominant_freq_hz,
+            intensity_series_json, spectrum_json, flag
         )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        job_id,
-        video_path,
-        dominant_freq,
-        intensity_series_json,
-        flag
-    ))
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (job_id, video_path, dominant_freq, intensity_series_json, spectrum_json, flag))
 
     cursor.execute(
         "UPDATE jobs SET status = 'done' WHERE job_id = ?",
@@ -198,18 +153,14 @@ def get_job_by_id(job_id: str):
 
     cursor.execute("""
         SELECT
-            j.status,
-            r.amplified_video_path,
-            r.dominant_freq_hz,
-            r.intensity_series_json,
-            r.flag
+            j.status, r.amplified_video_path, r.dominant_freq_hz,
+            r.intensity_series_json, r.spectrum_json, r.flag
         FROM jobs j
         LEFT JOIN results r ON j.job_id = r.job_id
         WHERE j.job_id = ?
     """, (job_id,))
 
     row = cursor.fetchone()
-
     conn.close()
 
     return row
@@ -219,6 +170,10 @@ def get_job_settings(job_id: str):
     """
     Returns everything needed to actually RUN the pipeline for a job:
     the uploaded filename, the ROI box, the frequency band, and alpha.
+
+    Kept separate from get_job_by_id() (which returns STATUS/RESULTS)
+    because these are two different questions: "what happened to this
+    job" vs. "what settings should be used to process it."
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -246,18 +201,13 @@ def get_all_jobs():
 
     cursor.execute("""
         SELECT
-            j.job_id,
-            j.created_at,
-            j.status,
-            r.flag,
-            r.dominant_freq_hz
+            j.job_id, j.created_at, j.status, r.flag, r.dominant_freq_hz
         FROM jobs j
         LEFT JOIN results r ON j.job_id = r.job_id
         ORDER BY j.created_at DESC
     """)
 
     rows = cursor.fetchall()
-
     conn.close()
 
     return rows

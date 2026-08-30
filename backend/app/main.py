@@ -6,11 +6,8 @@ from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from app.io.video_io import read_video_frames, write_video
-from app.core.pipeline import run_phase_based_evm
-from app.analytics.vibration import analyze_vibration
-
 
 from app import db
 from app.config import (
@@ -21,6 +18,9 @@ from app.config import (
     DEFAULT_ALPHA,
     MAX_ALPHA,
 )
+from app.io.video_io import read_video_frames, write_video
+from app.core.pipeline import run_phase_based_evm
+from app.analytics.vibration import analyze_vibration
 
 
 app = FastAPI(title="Motion Amplification Video Analysis System")
@@ -37,6 +37,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve the results directory statically so frontend can play videos
+os.makedirs(RESULTS_DIR, exist_ok=True)
+app.mount("/results", StaticFiles(directory=RESULTS_DIR), name="results")
 
 
 @app.on_event("startup")
@@ -56,7 +60,6 @@ def read_root():
 async def upload_video(file: UploadFile = File(...)):
     """Uploads a video and creates a new job."""
 
-    # Check the file extension
     ext = os.path.splitext(file.filename)[1].lower()
 
     if ext not in ALLOWED_VIDEO_EXTENSIONS:
@@ -65,10 +68,8 @@ async def upload_video(file: UploadFile = File(...)):
             detail=f"Unsupported file type: {ext}"
         )
 
-    # Create a unique ID for the job
     job_id = str(uuid.uuid4())
 
-    # Save the video using the job ID as the filename
     saved_path = os.path.join(
         UPLOAD_DIR,
         f"{job_id}{ext}"
@@ -78,7 +79,6 @@ async def upload_video(file: UploadFile = File(...)):
         content = await file.read()
         out_file.write(content)
 
-    # Create the job in the database
     db.create_job(
         job_id=job_id,
         filename=file.filename,
@@ -110,7 +110,6 @@ class RoiRequest(BaseModel):
 def submit_roi(job_id: str, roi: RoiRequest):
     """Saves the ROI and frequency settings for a job."""
 
-    # Make sure the job exists
     existing = db.get_job_by_id(job_id)
 
     if existing is None:
@@ -119,22 +118,17 @@ def submit_roi(job_id: str, roi: RoiRequest):
             detail="Job not found"
         )
 
-    # Resolve the frequency range
     if roi.preset == "custom":
-
         if roi.low_hz is None or roi.high_hz is None:
             raise HTTPException(
                 status_code=400,
                 detail="low_hz and high_hz are required when preset is 'custom'"
             )
-
         low_hz = roi.low_hz
         high_hz = roi.high_hz
 
     elif roi.preset in FREQ_PRESETS:
-
         preset_range = FREQ_PRESETS[roi.preset]
-
         low_hz = preset_range["low_hz"]
         high_hz = preset_range["high_hz"]
 
@@ -144,17 +138,14 @@ def submit_roi(job_id: str, roi: RoiRequest):
             detail=f"Unknown preset: {roi.preset}"
         )
 
-    # Use the default alpha if the user didn't provide one
     alpha = (
         roi.alpha
         if roi.alpha is not None
         else DEFAULT_ALPHA
     )
 
-    # Keep alpha within the allowed maximum
     alpha = min(alpha, MAX_ALPHA)
 
-    # Save everything in the database
     db.update_job_roi(
         job_id=job_id,
         roi={
@@ -180,51 +171,37 @@ def submit_roi(job_id: str, roi: RoiRequest):
 
 def run_processing_stub(job_id: str):
     """
-    Temporary processing function.
-
-    This currently simulates the real motion-analysis pipeline.
-    Later it will be replaced with the actual pipeline code.
+    Temporary processing function -- kept for reference/fallback.
+    No longer wired up; run_processing() below does the real work.
     """
 
     try:
-        # Simulate processing time
         time.sleep(5)
 
-        # Temporary fake analysis result
-        fake_intensity_series = [
-            0.1,
-            0.4,
-            0.9,
-            0.3,
-            0.2,
-            0.8,
-            0.5
-        ]
+        fake_intensity_series = [0.1, 0.4, 0.9, 0.3, 0.2, 0.8, 0.5]
 
         dominant_freq = 12.5
         flag = "periodic_vibration_detected"
 
-        # Save the result
         db.save_job_result(
             job_id=job_id,
             video_path=f"results/{job_id}_amplified.mp4",
             dominant_freq=dominant_freq,
-            intensity_series_json=json.dumps(
-                fake_intensity_series
-            ),
+            intensity_series_json=json.dumps(fake_intensity_series),
+            spectrum_json=json.dumps({}),
             flag=flag,
         )
 
     except Exception as error:
-        # If anything goes wrong, mark the job as failed
         db.mark_job_failed(job_id)
-
-        print(
-            f"Processing failed for job {job_id}: {error}"
-        )
+        print(f"Processing failed for job {job_id}: {error}")
 
 
 def run_processing(job_id: str):
+    """The real processing function: loads the upload, crops to ROI, runs
+    the phase-based amplification pipeline, saves the amplified video,
+    then runs FFT + peakiness detection on the result."""
+
     try:
         filename, roi_x, roi_y, roi_w, roi_h, low_hz, high_hz, alpha = db.get_job_settings(job_id)
 
@@ -250,6 +227,7 @@ def run_processing(job_id: str):
             video_path=result_path,
             dominant_freq=analysis["metrics"]["dominant_frequency_hz"],
             intensity_series_json=json.dumps(analysis["time_series"]["motion_intensity"]),
+            spectrum_json=json.dumps(analysis["frequency_spectrum"]),
             flag=flag,
         )
 
@@ -257,39 +235,24 @@ def run_processing(job_id: str):
         db.mark_job_failed(job_id)
         print(f"Processing failed for job {job_id}: {error}")
 
-    
+
 @app.post("/api/jobs/{job_id}/process")
-def process_job(
-    job_id: str,
-    background_tasks: BackgroundTasks
-):
+def process_job(job_id: str, background_tasks: BackgroundTasks):
     """Starts processing for a job after ROI/settings are provided."""
 
-    # Check that the job exists
     existing = db.get_job_by_id(job_id)
 
     if existing is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found"
-        )
+        raise HTTPException(status_code=404, detail="Job not found")
 
-    # Get the current status
     status = existing[0]
 
     if status == "done":
-        raise HTTPException(
-            status_code=400,
-            detail="Job already completed"
-        )
+        raise HTTPException(status_code=400, detail="Job already completed")
 
     if status == "processing":
-        raise HTTPException(
-            status_code=400,
-            detail="Job is already being processed"
-        )
+        raise HTTPException(status_code=400, detail="Job is already being processed")
 
-    # Check that frequency settings were submitted
     conn = db.get_connection()
     cursor = conn.cursor()
 
@@ -303,14 +266,10 @@ def process_job(
     )
 
     band_row = cursor.fetchone()
-
     conn.close()
 
     if band_row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found"
-        )
+        raise HTTPException(status_code=404, detail="Job not found")
 
     band_low_hz, band_high_hz = band_row
 
@@ -323,7 +282,6 @@ def process_job(
             )
         )
 
-    # Mark the job as processing
     conn = db.get_connection()
     cursor = conn.cursor()
 
@@ -339,16 +297,9 @@ def process_job(
     conn.commit()
     conn.close()
 
-    # Run the processing in the background
-    background_tasks.add_task(
-        run_processing,
-        job_id
-    )
+    background_tasks.add_task(run_processing, job_id)
 
-    return {
-        "status": "processing",
-        "job_id": job_id
-    }
+    return {"status": "processing", "job_id": job_id}
 
 
 @app.get("/api/jobs/{job_id}/status")
@@ -358,17 +309,11 @@ def get_job_status(job_id: str):
     row = db.get_job_by_id(job_id)
 
     if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found"
-        )
+        raise HTTPException(status_code=404, detail="Job not found")
 
     status = row[0]
 
-    return {
-        "job_id": job_id,
-        "status": status
-    }
+    return {"job_id": job_id, "status": status}
 
 
 @app.get("/api/jobs/{job_id}/result")
@@ -378,28 +323,21 @@ def get_job_result(job_id: str):
     row = db.get_job_by_id(job_id)
 
     if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found"
-        )
+        raise HTTPException(status_code=404, detail="Job not found")
 
-    status, video_path, dominant_freq, intensity_series_json, flag = row
+    status, video_path, dominant_freq, intensity_series_json, spectrum_json, flag = row
 
     if status != "done":
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Job is not finished yet "
-                f"(current status: {status})"
-            )
+            detail=f"Job is not finished yet (current status: {status})"
         )
 
     return {
         "job_id": job_id,
         "amplified_video_url": video_path,
-        "intensity_series": json.loads(
-            intensity_series_json
-        ),
+        "intensity_series": json.loads(intensity_series_json),
+        "frequency_spectrum": json.loads(spectrum_json) if spectrum_json else None,
         "dominant_freq_hz": dominant_freq,
         "flag": flag,
     }
@@ -412,7 +350,6 @@ def list_jobs():
     rows = db.get_all_jobs()
 
     jobs = []
-
     for job_id, created_at, status, flag, dominant_freq_hz in rows:
         jobs.append({
             "job_id": job_id,
@@ -422,9 +359,7 @@ def list_jobs():
             "dominant_freq_hz": dominant_freq_hz,
         })
 
-    return {
-        "jobs": jobs
-    }
+    return {"jobs": jobs}
 
 
 if __name__ == "__main__":
