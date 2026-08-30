@@ -1,9 +1,10 @@
 import os
 import uuid
-import time
 import json
+import logging
 from typing import Optional
 
+import aiofiles
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -17,10 +18,15 @@ from app.config import (
     FREQ_PRESETS,
     DEFAULT_ALPHA,
     MAX_ALPHA,
+    MAX_CLIP_SECONDS,
+    MAX_UPLOAD_BYTES,
 )
 from app.io.video_io import read_video_frames, write_video
 from app.core.pipeline import run_phase_based_evm
 from app.analytics.vibration import analyze_vibration
+
+logger = logging.getLogger(__name__)
+
 
 
 app = FastAPI(title="Motion Amplification Video Analysis System")
@@ -58,30 +64,84 @@ def read_root():
 
 @app.post("/api/upload")
 async def upload_video(file: UploadFile = File(...)):
-    """Uploads a video and creates a new job."""
+    """Uploads a video and creates a new job.
 
+    Security hardening applied:
+    - Extension allowlist check
+    - Magic-byte content validation (prevents renamed non-video files)
+    - Chunked streaming write (prevents OOM on large files)
+    - MAX_UPLOAD_BYTES ceiling with automatic partial-file cleanup
+    - Filename sanitized before storing to DB
+    """
+    import pathlib
+
+    # --- 1. Extension check ---
     ext = os.path.splitext(file.filename)[1].lower()
-
     if ext not in ALLOWED_VIDEO_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {ext}"
+            detail=f"Unsupported file type '{ext}'. Allowed: {sorted(ALLOWED_VIDEO_EXTENSIONS)}"
         )
 
-    job_id = str(uuid.uuid4())
+    # --- 2. Magic-byte validation ---
+    # Read just the first 12 bytes to check the container signature
+    MAGIC_SIGNATURES = {
+        b"ftyp": "mp4/mov",   # bytes 4-8 for MP4/MOV (ISO Base Media)
+        b"RIFF": "avi",       # bytes 0-4 for AVI
+        b"\x1aE\xdf\xa3": "webm",
+    }
+    header = await file.read(12)
+    await file.seek(0)
 
-    saved_path = os.path.join(
-        UPLOAD_DIR,
-        f"{job_id}{ext}"
+    is_valid = (
+        header[4:8] in (b"ftyp", b"free", b"mdat", b"moov", b"wide")  # MP4/MOV
+        or header[:4] == b"RIFF"                                        # AVI
+        or header[:4] == b"\x1aE\xdf\xa3"                              # WebM/MKV
     )
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "File content does not match a recognised video format. "
+                "Ensure you are uploading an actual video file, not a renamed document."
+            )
+        )
 
-    with open(saved_path, "wb") as out_file:
-        content = await file.read()
-        out_file.write(content)
+    # --- 3. Sanitize filename for DB storage ---
+    safe_filename = pathlib.Path(file.filename).name  # strips any directory separators
+
+    # --- 4. Stream to disk in chunks with a size ceiling ---
+    job_id = str(uuid.uuid4())
+    saved_path = os.path.join(UPLOAD_DIR, f"{job_id}{ext}")
+
+    CHUNK_SIZE = 1024 * 1024  # 1 MB per chunk
+    total_bytes = 0
+
+    try:
+        async with aiofiles.open(saved_path, "wb") as out_file:
+            while True:
+                chunk = await file.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"Upload exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit. "
+                            "Please trim or compress the video before uploading."
+                        )
+                    )
+                await out_file.write(chunk)
+    except HTTPException:
+        # Clean up partial file before re-raising
+        if os.path.exists(saved_path):
+            os.remove(saved_path)
+        raise
 
     db.create_job(
         job_id=job_id,
-        filename=file.filename,
+        filename=safe_filename,
         alpha=None,
         low_hz=None,
         high_hz=None,
@@ -91,8 +151,9 @@ async def upload_video(file: UploadFile = File(...)):
 
     return {
         "job_id": job_id,
-        "filename": file.filename
+        "filename": safe_filename,
     }
+
 
 
 class RoiRequest(BaseModel):
@@ -169,38 +230,16 @@ def submit_roi(job_id: str, roi: RoiRequest):
     }
 
 
-def run_processing_stub(job_id: str):
-    """
-    Temporary processing function -- kept for reference/fallback.
-    No longer wired up; run_processing() below does the real work.
-    """
-
-    try:
-        time.sleep(5)
-
-        fake_intensity_series = [0.1, 0.4, 0.9, 0.3, 0.2, 0.8, 0.5]
-
-        dominant_freq = 12.5
-        flag = "periodic_vibration_detected"
-
-        db.save_job_result(
-            job_id=job_id,
-            video_path=f"results/{job_id}_amplified.mp4",
-            dominant_freq=dominant_freq,
-            intensity_series_json=json.dumps(fake_intensity_series),
-            spectrum_json=json.dumps({}),
-            flag=flag,
-        )
-
-    except Exception as error:
-        db.mark_job_failed(job_id)
-        print(f"Processing failed for job {job_id}: {error}")
 
 
 def run_processing(job_id: str):
-    """The real processing function: loads the upload, crops to ROI, runs
-    the phase-based amplification pipeline, saves the amplified video,
-    then runs FFT + peakiness detection on the result."""
+    """Background task: loads the upload, validates constraints, crops to ROI,
+    runs the phase-based EVM pipeline, saves the amplified video, then runs
+    FFT + peakiness detection and writes results to the database.
+
+    Raises no exceptions — all errors mark the job as 'failed' in the DB
+    so the frontend can surface them to the user.
+    """
 
     try:
         filename, roi_x, roi_y, roi_w, roi_h, low_hz, high_hz, alpha = db.get_job_settings(job_id)
@@ -210,9 +249,38 @@ def run_processing(job_id: str):
 
         frames, fps = read_video_frames(saved_path)
 
+        # --- Guard: clip length ---
+        clip_seconds = len(frames) / fps
+        if clip_seconds > MAX_CLIP_SECONDS:
+            raise ValueError(
+                f"Clip is {clip_seconds:.1f}s — exceeds the {MAX_CLIP_SECONDS}s limit. "
+                "Please upload a shorter clip."
+            )
+
+        # --- Guard: ROI bounds ---
+        frame_h, frame_w = frames.shape[1], frames.shape[2]
+        if (
+            roi_x < 0 or roi_y < 0
+            or roi_x + roi_w > frame_w
+            or roi_y + roi_h > frame_h
+        ):
+            raise ValueError(
+                f"ROI ({roi_x}, {roi_y}, {roi_w}×{roi_h}) falls outside "
+                f"frame bounds ({frame_w}×{frame_h}). "
+                "Please resubmit with a valid region of interest."
+            )
+        if roi_w < 4 or roi_h < 4:
+            raise ValueError(
+                f"ROI dimensions ({roi_w}×{roi_h}) are too small for pyramid "
+                "decomposition. Minimum is 4×4 pixels."
+            )
+
         roi_frames = frames[:, roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
 
-        amplified = run_phase_based_evm(roi_frames, fps, low_hz=low_hz, high_hz=high_hz, alpha=alpha)
+        amplified, filter_warnings = run_phase_based_evm(roi_frames, fps, low_hz=low_hz, high_hz=high_hz, alpha=alpha)
+
+        if filter_warnings:
+            logger.warning("Job %s: bandpass frequency clamping applied — %s", job_id, filter_warnings)
 
         os.makedirs(RESULTS_DIR, exist_ok=True)
         result_path = os.path.join(RESULTS_DIR, f"{job_id}_amplified.mp4")
@@ -231,9 +299,14 @@ def run_processing(job_id: str):
             flag=flag,
         )
 
+        logger.info("Job %s completed — %s @ %.3f Hz", job_id, flag, analysis["metrics"]["dominant_frequency_hz"])
+
+
     except Exception as error:
         db.mark_job_failed(job_id)
-        print(f"Processing failed for job {job_id}: {error}")
+        logger.error("Processing failed for job %s: %s", job_id, error, exc_info=True)
+
+
 
 
 @app.post("/api/jobs/{job_id}/process")

@@ -5,8 +5,15 @@ DB_NAME = "jobs.db"
 
 
 def get_connection():
-    """Creates and returns a connection to the SQLite database."""
-    conn = sqlite3.connect(DB_NAME)
+    """Creates and returns a connection to the SQLite database.
+
+    WAL journal mode is enabled so concurrent reads don't block writes
+    and vice-versa (critical when background processing tasks run
+    alongside API requests).  The 30-second timeout prevents
+    'database is locked' errors under concurrent job submissions.
+    """
+    conn = sqlite3.connect(DB_NAME, timeout=30, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 

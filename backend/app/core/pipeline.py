@@ -5,7 +5,14 @@ from .bandpass import temporal_bandpass_filter
 from .riesz import compute_riesz_pair
 from .phase import reference_orientation, compute_phase_signal
 
+
 def run_baseline_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_levels=None):
+    """Baseline (intensity-domain) Eulerian Video Magnification.
+
+    Returns:
+        out_frames (np.ndarray): amplified video, same shape as ``frames``
+        filter_warnings (dict): any frequency-clamping warnings from bandpass
+    """
     T = frames.shape[0]
     if amplify_levels is None:
         amplify_levels = list(range(1, levels))
@@ -17,9 +24,12 @@ def run_baseline_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_leve
         np.stack([pyramids_per_frame[t][lvl] for t in range(T)], axis=0)
         for lvl in range(n_levels)
     ]
+    del pyramids_per_frame  # free intermediate memory
 
+    filter_warnings = {}
     for lvl in amplify_levels:
-        filtered = temporal_bandpass_filter(level_stacks[lvl], fps, low_hz, high_hz)
+        filtered, w = temporal_bandpass_filter(level_stacks[lvl], fps, low_hz, high_hz)
+        filter_warnings.update(w)
         level_stacks[lvl] = level_stacks[lvl] + alpha * filtered
 
     out_frames = np.empty_like(frames)
@@ -27,15 +37,24 @@ def run_baseline_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_leve
         levels_t = [level_stacks[lvl][t] for lvl in range(n_levels)]
         out_frames[t] = collapse_laplacian_pyramid(levels_t)
 
-    return out_frames
+    return out_frames, filter_warnings
+
 
 def _bgr_to_ycrcb(frames):
     return np.stack([cv2.cvtColor(f, cv2.COLOR_BGR2YCrCb) for f in frames])
 
+
 def _ycrcb_to_bgr(frames):
     return np.stack([cv2.cvtColor(f, cv2.COLOR_YCrCb2BGR) for f in frames])
 
+
 def run_phase_based_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_levels=None):
+    """Phase-based Eulerian Video Magnification (Wadhwa et al., 2013).
+
+    Returns:
+        out_frames (np.ndarray): amplified BGR video, same shape as ``frames``
+        filter_warnings (dict): any frequency-clamping warnings from bandpass
+    """
     T = frames.shape[0]
     if amplify_levels is None:
         amplify_levels = list(range(1, levels))
@@ -49,7 +68,9 @@ def run_phase_based_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_l
         np.stack([pyramids_per_frame[t][lvl] for t in range(T)], axis=0)
         for lvl in range(n_levels)
     ]
+    del pyramids_per_frame  # free intermediate memory
 
+    filter_warnings = {}
     for lvl in amplify_levels:
         i_stack = level_stacks[lvl]
 
@@ -64,7 +85,8 @@ def run_phase_based_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_l
         theta = reference_orientation(r1_stack, r2_stack)
         phase, amplitude = compute_phase_signal(i_stack, r1_stack, r2_stack, theta)
 
-        filtered_phase = temporal_bandpass_filter(phase, fps, low_hz, high_hz)
+        filtered_phase, w = temporal_bandpass_filter(phase, fps, low_hz, high_hz)
+        filter_warnings.update(w)
         amplified_phase = phase + alpha * filtered_phase
 
         level_stacks[lvl] = amplitude * np.cos(amplified_phase)
@@ -76,4 +98,4 @@ def run_phase_based_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_l
 
     out_ycrcb = ycrcb.copy()
     out_ycrcb[..., 0] = out_y
-    return _ycrcb_to_bgr(out_ycrcb)
+    return _ycrcb_to_bgr(out_ycrcb), filter_warnings

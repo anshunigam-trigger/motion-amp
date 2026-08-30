@@ -26,6 +26,8 @@ RESULTS_DIR = "results"
 # Allowed video formats for upload
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi"}
 
-# Limit for uploaded clips
+# Maximum duration (seconds) for uploaded clips — enforced after reading
 MAX_CLIP_SECONDS = 20
 
+# Maximum raw upload size in bytes — enforced during streaming write (500 MB)
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024

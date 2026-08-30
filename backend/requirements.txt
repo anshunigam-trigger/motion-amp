@@ -5,4 +5,6 @@ scipy==1.16.3
 fastapi==0.115.0
 uvicorn==0.32.0
 python-multipart==0.0.12
-pydantic==2.9.2
+pydantic>=2.10               # 2.9.2 has no py3.14 wheel — needs MSVC to build from source
+aiofiles>=23.0               # Required by FastAPI StaticFiles for async video serving
+anyio>=4.0                   # Uvicorn async backend — explicit pin for stability
