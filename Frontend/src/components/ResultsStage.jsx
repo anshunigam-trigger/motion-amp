@@ -13,7 +13,7 @@ import { amplifiedVideoUrl } from '../api';
  *   file        — original File object
  *   onNewAnalysis — () => void (full reset)
  */
-export default function ResultsStage({ result, roi, file, onNewAnalysis }) {
+export default function ResultsStage({ result, roi, file, originalUrl, onNewAnalysis }) {
   const [videoTab, setVideoTab] = useState('amplified');
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -22,7 +22,6 @@ export default function ResultsStage({ result, roi, file, onNewAnalysis }) {
   const [videoReady, setVideoReady] = useState(false);
 
   const isDetected = result.flag === 'periodic_vibration_detected';
-  const originalUrl = file ? URL.createObjectURL(file) : '';
   const ampUrl = amplifiedVideoUrl(result.amplified_video_url);
   const freqHz = result.dominant_freq_hz != null ? Number(result.dominant_freq_hz).toFixed(2) : '—';
 
@@ -46,11 +45,6 @@ export default function ResultsStage({ result, roi, file, onNewAnalysis }) {
     
     report = { snr: snr.toFixed(1), text, isConfident, maxAmp: maxAmp.toFixed(5) };
   }
-
-  /* Cleanup blob URL */
-  useEffect(() => {
-    return () => { if (originalUrl) URL.revokeObjectURL(originalUrl); };
-  }, [originalUrl]);
 
   const onVideoLoaded = useCallback(() => {
     const v = videoRef.current;
@@ -195,15 +189,15 @@ export default function ResultsStage({ result, roi, file, onNewAnalysis }) {
 
         {/* Video module */}
         <div className="rounded-3xl overflow-hidden" style={{ background: '#0D1B2A', boxShadow: '0 8px 32px rgba(13,27,42,0.12)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="relative bg-black">
+          <div className="relative bg-black flex justify-center items-center" style={{ maxHeight: '550px' }}>
             <video
               ref={videoRef}
               key={videoTab} /* force remount on tab switch */
               src={videoTab === 'original' ? originalUrl : ampUrl}
               muted loop playsInline
               onLoadedMetadata={onVideoLoaded}
-              className="block w-full"
-              style={{ height: 'auto' }}
+              className="block"
+              style={{ maxWidth: '100%', maxHeight: '550px', objectFit: 'contain' }}
             />
 
             {/* ROI overlay (only on original tab, or amplified if coordinates apply) */}

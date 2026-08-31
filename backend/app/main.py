@@ -282,9 +282,13 @@ def run_processing(job_id: str):
         if filter_warnings:
             logger.warning("Job %s: bandpass frequency clamping applied — %s", job_id, filter_warnings)
 
+        # Composite the amplified ROI back into the full-frame original video
+        full_frames_amplified = frames.copy()
+        full_frames_amplified[:, roi_y:roi_y + roi_h, roi_x:roi_x + roi_w] = amplified
+
         os.makedirs(RESULTS_DIR, exist_ok=True)
         result_path = os.path.join(RESULTS_DIR, f"{job_id}_amplified.mp4")
-        write_video(result_path, amplified, fps)
+        write_video(result_path, full_frames_amplified, fps)
 
         analysis = analyze_vibration(amplified, fps, roi=None, low_hz=low_hz, high_hz=high_hz)
 
@@ -303,7 +307,7 @@ def run_processing(job_id: str):
 
 
     except Exception as error:
-        db.mark_job_failed(job_id)
+        db.mark_job_failed(job_id, str(error))
         logger.error("Processing failed for job %s: %s", job_id, error, exc_info=True)
 
 
@@ -384,9 +388,13 @@ def get_job_status(job_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    status = row[0]
+    if len(row) == 7: # We added error_message
+        status, _, _, _, _, _, error_message = row
+    else:
+        status = row[0]
+        error_message = None
 
-    return {"job_id": job_id, "status": status}
+    return {"job_id": job_id, "status": status, "error_message": error_message}
 
 
 @app.get("/api/jobs/{job_id}/result")
@@ -398,7 +406,11 @@ def get_job_result(job_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    status, video_path, dominant_freq, intensity_series_json, spectrum_json, flag = row
+    if len(row) == 7:
+        status, video_path, dominant_freq, intensity_series_json, spectrum_json, flag, error_message = row
+    else:
+        status, video_path, dominant_freq, intensity_series_json, spectrum_json, flag = row
+        error_message = None
 
     if status != "done":
         raise HTTPException(

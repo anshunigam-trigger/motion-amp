@@ -19,9 +19,8 @@ const PRESETS = {
  *   onGoBack    — () => void — go back to upload
  *   onError     — (msg) => void
  */
-export default function ConfigureStage({ file, jobId, onProcessing, onGoBack, onError, onRoiChange }) {
+export default function ConfigureStage({ file, videoUrl, jobId, onProcessing, onGoBack, onError, onRoiChange }) {
   const videoRef = useRef(null);
-  const [videoUrl] = useState(() => URL.createObjectURL(file));
   const [videoReady, setVideoReady] = useState(false);
 
   /* ROI state — native video pixels */
@@ -42,11 +41,6 @@ export default function ConfigureStage({ file, jobId, onProcessing, onGoBack, on
   /* Drawing state — for initial ROI draw via mouse on the video area */
   const [drawing, setDrawing] = useState(false);
   const drawStart = useRef({ x: 0, y: 0 });
-
-  /* Cleanup blob URL */
-  useEffect(() => {
-    return () => URL.revokeObjectURL(videoUrl);
-  }, [videoUrl]);
 
   const onVideoLoaded = useCallback(() => {
     const v = videoRef.current;

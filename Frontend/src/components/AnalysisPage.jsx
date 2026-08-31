@@ -19,11 +19,13 @@ export default function AnalysisPage({ onNavigate }) {
   const [result, setResult] = useState(null);
   const [roi, setRoi]       = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [error, setError]   = useState(null);
+  const [fileUrl, setFileUrl] = useState('');
 
   /* ── Stage transitions ── */
   const onUploaded = useCallback(({ jobId: id, file: f }) => {
     setJobId(id);
     setFile(f);
+    setFileUrl(URL.createObjectURL(f));
     setStage('configure');
     setError(null);
   }, []);
@@ -49,13 +51,15 @@ export default function AnalysisPage({ onNavigate }) {
   }, []);
 
   const resetAll = useCallback(() => {
+    if (fileUrl) URL.revokeObjectURL(fileUrl);
     setStage('upload');
     setJobId(null);
     setFile(null);
+    setFileUrl('');
     setResult(null);
     setRoi({ x: 0, y: 0, w: 0, h: 0 });
     setError(null);
-  }, []);
+  }, [fileUrl]);
 
   /* ── Shared ROI setter for ConfigureStage → ResultsStage ── */
   const handleRoiFromConfigure = useCallback((r) => setRoi(r), []);
@@ -102,6 +106,7 @@ export default function AnalysisPage({ onNavigate }) {
         {stage === 'configure' && (
           <ConfigureStage
             file={file}
+            videoUrl={fileUrl}
             jobId={jobId}
             onProcessing={onProcessing}
             onGoBack={resetAll}
@@ -124,6 +129,7 @@ export default function AnalysisPage({ onNavigate }) {
             result={result}
             roi={roi}
             file={file}
+            originalUrl={fileUrl}
             onNewAnalysis={resetAll}
           />
         )}

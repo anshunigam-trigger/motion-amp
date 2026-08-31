@@ -87,7 +87,19 @@ def run_phase_based_evm(frames, fps, low_hz, high_hz, alpha, levels=4, amplify_l
 
         filtered_phase, w = temporal_bandpass_filter(phase, fps, low_hz, high_hz)
         filter_warnings.update(w)
-        amplified_phase = phase + alpha * filtered_phase
+
+        # Amplitude-weighted spatial smoothing of the filtered phase
+        # (Crucial for high alpha to reduce noise and prevent phase-tearing)
+        spatially_smoothed_phase = np.empty_like(filtered_phase)
+        for t in range(T):
+            amp_t = amplitude[t]
+            phase_t = filtered_phase[t]
+            # 3x3 or 5x5 blur is standard for EVM phase smoothing
+            num = cv2.GaussianBlur(phase_t * amp_t, (5, 5), 0)
+            den = cv2.GaussianBlur(amp_t, (5, 5), 0)
+            spatially_smoothed_phase[t] = num / (den + 1e-8)
+
+        amplified_phase = phase + alpha * spatially_smoothed_phase
 
         level_stacks[lvl] = amplitude * np.cos(amplified_phase)
 

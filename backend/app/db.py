@@ -35,6 +35,7 @@ def init_db():
             band_high_hz REAL,
             alpha REAL,
             status TEXT,
+            error_message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -139,14 +140,14 @@ def save_job_result(
     conn.close()
 
 
-def mark_job_failed(job_id: str):
-    """Marks a job as failed if processing encounters an error."""
+def mark_job_failed(job_id: str, error_message: str = None):
+    """Marks a job as failed if processing encounters an error, storing the reason."""
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute(
-        "UPDATE jobs SET status = 'failed' WHERE job_id = ?",
-        (job_id,)
+        "UPDATE jobs SET status = 'failed', error_message = ? WHERE job_id = ?",
+        (error_message, job_id,)
     )
 
     conn.commit()
@@ -161,7 +162,7 @@ def get_job_by_id(job_id: str):
     cursor.execute("""
         SELECT
             j.status, r.amplified_video_path, r.dominant_freq_hz,
-            r.intensity_series_json, r.spectrum_json, r.flag
+            r.intensity_series_json, r.spectrum_json, r.flag, j.error_message
         FROM jobs j
         LEFT JOIN results r ON j.job_id = r.job_id
         WHERE j.job_id = ?

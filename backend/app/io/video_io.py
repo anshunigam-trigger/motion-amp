@@ -64,11 +64,10 @@ def read_video_frames(path):
 
 def write_video(path, frames, fps):
     """Write a (T, H, W, 3) float32 frame array to an mp4 video file."""
+    import imageio
     frames_u8 = np.clip(frames, 0, 255).astype(np.uint8)
-
-    h, w = frames_u8.shape[1:3]
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+    writer = imageio.get_writer(path, fps=fps, codec='libx264', macro_block_size=None)
     for f in frames_u8:
-        writer.write(f)
-    writer.release()
+        # OpenCV processes in BGR, imageio expects RGB
+        writer.append_data(cv2.cvtColor(f, cv2.COLOR_BGR2RGB))
+    writer.close()

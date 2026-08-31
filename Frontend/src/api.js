@@ -82,11 +82,14 @@ export function pollStatus(jobId, onStatus, intervalMs = 2000) {
 }
 
 /**
- * Build a full URL to the amplified video.
+ * Build a URL to the amplified video.
+ * Uses a relative path so it goes through the Vite dev proxy
+ * (/results → backend), avoiding CORS issues.
  * Normalizes backslashes to forward slashes (Windows paths from backend).
  */
 export function amplifiedVideoUrl(relativePath) {
   if (!relativePath) return '';
   const normalized = relativePath.replace(/\\/g, '/');
-  return `${BACKEND}/${normalized}`;
+  // Ensure it starts with /
+  return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }

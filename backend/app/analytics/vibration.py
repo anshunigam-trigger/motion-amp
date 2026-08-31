@@ -26,14 +26,6 @@ def compute_motion_signal(
     frames: np.ndarray,
     roi: Optional[Tuple[int, int, int, int]] = None,
 ) -> np.ndarray:
-    """
-    frames: (T, H, W, 3) array -- the raw (or amplified) video
-    roi: optional (x, y, w, h) -- restrict analysis to one region instead
-        of the whole frame
-
-    Returns: a 1D array of length (T - 1) -- one "how much did the image
-        change" value per pair of consecutive frames.
-    """
     if frames.shape[0] < 2:
         raise ValueError("At least 2 frames are required for frame differencing.")
 
@@ -43,13 +35,44 @@ def compute_motion_signal(
     else:
         frames_cropped = frames
 
+    # Convert to grayscale float32
     gray_frames = np.array([
         cv2.cvtColor(np.clip(f, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
         for f in frames_cropped
     ], dtype=np.float32)
 
-    diffs = np.abs(np.diff(gray_frames, axis=0))
-    return np.mean(diffs, axis=(1, 2))
+    # Calculate pixel-wise variance over time to identify moving edges
+    pixel_variance = np.var(gray_frames, axis=0)
+    
+    # Isolate the top 5% most active pixels (where motion is happening)
+    # Using at least a 1.0 variance threshold to ignore purely static sensor noise
+    threshold = max(1.0, np.percentile(pixel_variance, 95))
+    mask = pixel_variance > threshold
+    
+    if not np.any(mask):
+        # Absolutely no movement detected
+        return np.zeros(len(gray_frames) - 1)
+        
+    # Extract the time-series of just the active pixels
+    active_pixels = gray_frames[:, mask]  # Shape: (T, N_active)
+    
+    # Mean-center the data over time
+    active_pixels -= np.mean(active_pixels, axis=0)
+    
+    # Use Singular Value Decomposition (PCA) to extract the dominant 1D motion component.
+    # This beautifully preserves the sign of the motion (no frequency doubling!) and
+    # dramatically suppresses uncorrelated noise.
+    U, S, Vt = np.linalg.svd(active_pixels, full_matrices=False)
+    
+    # U[:, 0] is the principal temporal component (length T)
+    # We return the difference (length T-1) to match the expected velocity format,
+    # or just return U[:, 0] directly since it already represents position!
+    # Wait, EVM phase is position. Let's just return the position signal directly.
+    # It has length T. The previous method returned T-1.
+    # Let's return U[:, 0]!
+    
+    signal = U[:, 0]
+    return signal
 
 def compute_fft_spectrum(signal: np.ndarray, fps: float) -> Tuple[np.ndarray, np.ndarray]:
     n = len(signal)
@@ -96,12 +119,28 @@ def spectral_peakiness(
     amplitude: np.ndarray,
     peak_freq: float,
     exclude_bandwidth: float = 1.0,
+    low_hz: Optional[float] = None,
+    high_hz: Optional[float] = None,
 ) -> float:
     peak_idx = np.argmin(np.abs(freqs - peak_freq))
     peak_amplitude = amplitude[peak_idx]
 
+    # Create a mask for valid background frequencies
     background_mask = np.abs(freqs - peak_freq) > exclude_bandwidth
+    
+    # Also exclude out-of-band frequencies (they often contain EVM transients)
+    if low_hz is not None:
+        background_mask &= freqs >= (low_hz - 0.5)
+    else:
+        background_mask &= freqs >= 0.5
+        
+    if high_hz is not None:
+        background_mask &= freqs <= (high_hz + 0.5)
+
     background = amplitude[background_mask]
+
+    if len(background) == 0:
+        return 0.0
 
     background_mean = float(np.mean(background))
     background_std = float(np.std(background))
@@ -115,13 +154,15 @@ def analyze_vibration(
     low_hz: Optional[float] = None,
     high_hz: Optional[float] = None,
     peakiness_threshold: float = 3.0,
+    min_amplitude: float = 0.01,
 ) -> Dict[str, Any]:
     signal = compute_motion_signal(frames, roi=roi)
     freqs, amplitude = compute_fft_spectrum(signal, fps)
     peak_freq, peak_amplitude = find_dominant_frequency(freqs, amplitude, low_hz, high_hz)
-    peakiness = spectral_peakiness(freqs, amplitude, peak_freq)
+    peakiness = spectral_peakiness(freqs, amplitude, peak_freq, low_hz=low_hz, high_hz=high_hz)
 
-    detected = peakiness >= peakiness_threshold
+    # A valid vibration must exceed the SNR threshold AND have a meaningful absolute amplitude
+    detected = (peakiness >= peakiness_threshold) and (peak_amplitude >= min_amplitude)
     time_axis = [round(i / fps, 4) for i in range(len(signal))]
 
     return {

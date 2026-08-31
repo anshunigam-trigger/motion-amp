@@ -30,5 +30,13 @@ def temporal_bandpass_filter(data, fps, low_hz, high_hz, order=4):
     low = clamped_low / nyquist
     high = clamped_high / nyquist
     sos = signal.butter(order, [low, high], btype="band", output="sos")
-    filtered = signal.sosfiltfilt(sos, data, axis=0)
+    
+    # Calculate safe padlen to prevent ValueError on short videos
+    # default padlen is 9 * len(sos), but input must be > padlen
+    max_padlen = 9 * sos.shape[0]
+    safe_padlen = min(data.shape[0] - 1, max_padlen)
+    if safe_padlen < 0:
+        safe_padlen = 0
+        
+    filtered = signal.sosfiltfilt(sos, data, axis=0, padlen=safe_padlen)
     return filtered, warnings
