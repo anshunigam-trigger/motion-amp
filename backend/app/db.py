@@ -48,6 +48,8 @@ def init_db():
             intensity_series_json TEXT,
             spectrum_json TEXT,
             flag TEXT,
+            confidence REAL,
+            amplitude_px REAL,
             FOREIGN KEY (job_id) REFERENCES jobs (job_id)
         )
     """)
@@ -117,7 +119,9 @@ def save_job_result(
     dominant_freq: float,
     intensity_series_json: str,
     spectrum_json: str,
-    flag: str
+    flag: str,
+    confidence: float,
+    amplitude_px: float
 ):
     """Stores the final result and marks the job as done."""
     conn = get_connection()
@@ -126,10 +130,11 @@ def save_job_result(
     cursor.execute("""
         INSERT INTO results (
             job_id, amplified_video_path, dominant_freq_hz,
-            intensity_series_json, spectrum_json, flag
+            intensity_series_json, spectrum_json, flag,
+            confidence, amplitude_px
         )
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (job_id, video_path, dominant_freq, intensity_series_json, spectrum_json, flag))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (job_id, video_path, dominant_freq, intensity_series_json, spectrum_json, flag, confidence, amplitude_px))
 
     cursor.execute(
         "UPDATE jobs SET status = 'done' WHERE job_id = ?",
@@ -162,7 +167,9 @@ def get_job_by_id(job_id: str):
     cursor.execute("""
         SELECT
             j.status, r.amplified_video_path, r.dominant_freq_hz,
-            r.intensity_series_json, r.spectrum_json, r.flag, j.error_message
+            r.intensity_series_json, r.spectrum_json, r.flag, j.error_message,
+            r.confidence, r.amplitude_px, j.filename,
+            j.roi_x, j.roi_y, j.roi_w, j.roi_h
         FROM jobs j
         LEFT JOIN results r ON j.job_id = r.job_id
         WHERE j.job_id = ?
@@ -209,7 +216,7 @@ def get_all_jobs():
 
     cursor.execute("""
         SELECT
-            j.job_id, j.created_at, j.status, r.flag, r.dominant_freq_hz
+            j.job_id, j.created_at, j.status, r.flag, r.dominant_freq_hz, r.confidence, r.amplitude_px, j.filename
         FROM jobs j
         LEFT JOIN results r ON j.job_id = r.job_id
         ORDER BY j.created_at DESC

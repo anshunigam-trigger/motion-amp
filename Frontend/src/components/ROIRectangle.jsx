@@ -33,17 +33,34 @@ export default function ROIRectangle({
   /* ── Scale factors ── */
   const getScale = useCallback(() => {
     const v = videoRef?.current;
-    if (!v || !v.videoWidth || !v.videoHeight) return { sx: 1, sy: 1 };
+    if (!v || !v.videoWidth || !v.videoHeight) return { sx: 1, sy: 1, ox: 0, oy: 0 };
+    
+    const vRatio = v.videoWidth / v.videoHeight;
+    const cRatio = v.clientWidth / v.clientHeight;
+    
+    let rw, rh, ox = 0, oy = 0;
+    if (vRatio > cRatio) {
+      rw = v.clientWidth;
+      rh = v.clientWidth / vRatio;
+      oy = (v.clientHeight - rh) / 2;
+    } else {
+      rh = v.clientHeight;
+      rw = v.clientHeight * vRatio;
+      ox = (v.clientWidth - rw) / 2;
+    }
+
     return {
-      sx: v.clientWidth / v.videoWidth,
-      sy: v.clientHeight / v.videoHeight,
+      sx: rw / v.videoWidth,
+      sy: rh / v.videoHeight,
+      ox,
+      oy
     };
   }, [videoRef]);
 
   /* ── Convert native roi to display px ── */
-  const { sx, sy } = getScale();
-  const dx = roi.x * sx;
-  const dy = roi.y * sy;
+  const { sx, sy, ox, oy } = getScale();
+  const dx = ox + roi.x * sx;
+  const dy = oy + roi.y * sy;
   const dw = roi.w * sx;
   const dh = roi.h * sy;
 

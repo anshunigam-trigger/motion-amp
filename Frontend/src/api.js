@@ -93,3 +93,11 @@ export function amplifiedVideoUrl(relativePath) {
   // Ensure it starts with /
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
+
+/**
+ * Build a URL to the original uploaded video.
+ */
+export function originalVideoUrl(filename) {
+  if (!filename) return '';
+  return `/uploads/${filename}`;
+}

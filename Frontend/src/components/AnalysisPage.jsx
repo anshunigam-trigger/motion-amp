@@ -172,7 +172,7 @@ export default function AnalysisPage({ onNavigate }) {
         <div className="footer-inner">
           <Logo small onClick={() => onNavigate('landing')} />
           <span className="footer-tagline">
-            Motion Amplification &amp; Vibration Analysis System — SIH 1415
+            Motion Amplification &amp; Vibration Analysis System
           </span>
         </div>
       </footer>

@@ -28,22 +28,22 @@ export default function ResultsStage({ result, roi, file, originalUrl, onNewAnal
   /* Compute detailed report metrics */
   let report = null;
   const spec = result.frequency_spectrum;
+  const confidence = result.confidence != null ? Number(result.confidence) : 0;
+  const amplitudePx = result.amplitude_px != null ? Number(result.amplitude_px).toFixed(4) : 0;
+
   if (spec && spec.amplitudes && spec.amplitudes.length > 0) {
-    const maxAmp = Math.max(...spec.amplitudes);
-    const meanAmp = spec.amplitudes.reduce((a, b) => a + b, 0) / spec.amplitudes.length;
-    const snr = meanAmp > 0 ? (maxAmp / meanAmp) : 0;
-    const isConfident = isDetected && snr >= 3.0;
+    const isConfident = isDetected && confidence >= 50.0;
 
     let text = '';
     if (isConfident) {
-      text = `The system confidently detected a distinct periodic motion at ${freqHz} Hz. The peak signal strength is ${snr.toFixed(1)}x higher than the background noise floor, indicating a clear, sustained vibration rather than random movement or camera shake.`;
+      text = `The system confidently detected a distinct periodic motion at ${freqHz} Hz with an estimated sub-pixel amplitude of ${amplitudePx} pixels. The signal exhibits ${confidence.toFixed(1)}% confidence, indicating a clear, sustained vibration rather than random movement or camera shake.`;
     } else if (isDetected) {
-      text = `The system detected a potential periodic motion at ${freqHz} Hz, but the signal-to-noise ratio (${snr.toFixed(1)}x) is relatively low. This suggests a weak vibration or a signal heavily obscured by background noise.`;
+      text = `The system detected a potential periodic motion at ${freqHz} Hz, but the confidence score (${confidence.toFixed(1)}%) is relatively low. This suggests a weak vibration or a signal heavily obscured by background noise.`;
     } else {
-      text = `No significant periodic motion was detected. The highest signal peak (${snr.toFixed(1)}x noise floor) did not exceed the confidence threshold, suggesting only random noise or transient movements in the specified frequency band.`;
+      text = `No significant periodic motion was detected. The highest signal peak did not exceed the confidence threshold, suggesting only random noise, camera shake, or transient movements in the specified frequency band.`;
     }
     
-    report = { snr: snr.toFixed(1), text, isConfident, maxAmp: maxAmp.toFixed(5) };
+    report = { confidence: `${confidence.toFixed(1)}%`, text, isConfident, maxAmp: `${amplitudePx} px` };
   }
 
   const onVideoLoaded = useCallback(() => {
@@ -302,10 +302,10 @@ export default function ResultsStage({ result, roi, file, originalUrl, onNewAnal
           <div className="flex gap-6 flex-wrap md:flex-nowrap shrink-0 p-5 rounded-2xl" style={{ background: '#F5F3EE' }}>
             <div className="flex flex-col gap-1">
               <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>
-                Signal-to-Noise
+                Confidence
               </span>
               <span className="text-xl font-bold" style={{ fontFamily: "'DM Mono', monospace", color: report.isConfident ? '#E8741A' : '#0D1B2A' }}>
-                {report.snr}x
+                {report.confidence}
               </span>
             </div>
             <div className="w-px bg-gray-200" />

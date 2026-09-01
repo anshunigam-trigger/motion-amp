@@ -47,6 +47,7 @@ app.add_middleware(
 # Serve the results directory statically so frontend can play videos
 os.makedirs(RESULTS_DIR, exist_ok=True)
 app.mount("/results", StaticFiles(directory=RESULTS_DIR), name="results")
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.on_event("startup")
@@ -291,6 +292,9 @@ def run_processing(job_id: str):
         write_video(result_path, full_frames_amplified, fps)
 
         analysis = analyze_vibration(amplified, fps, roi=None, low_hz=low_hz, high_hz=high_hz)
+        
+        if "error" in analysis:
+            raise ValueError(analysis["error"])
 
         flag = "periodic_vibration_detected" if analysis["metrics"]["detected"] else "no_vibration_detected"
 
@@ -301,6 +305,8 @@ def run_processing(job_id: str):
             intensity_series_json=json.dumps(analysis["time_series"]["motion_intensity"]),
             spectrum_json=json.dumps(analysis["frequency_spectrum"]),
             flag=flag,
+            confidence=analysis.get("metrics", {}).get("confidence", 0.0),
+            amplitude_px=analysis.get("metrics", {}).get("peak_amplitude", 0.0),
         )
 
         logger.info("Job %s completed — %s @ %.3f Hz", job_id, flag, analysis["metrics"]["dominant_frequency_hz"])
@@ -388,11 +394,8 @@ def get_job_status(job_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if len(row) == 7: # We added error_message
-        status, _, _, _, _, _, error_message = row
-    else:
-        status = row[0]
-        error_message = None
+    status = row[0]
+    error_message = row[6] if len(row) >= 7 else None
 
     return {"job_id": job_id, "status": status, "error_message": error_message}
 
@@ -406,11 +409,19 @@ def get_job_result(job_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if len(row) == 7:
-        status, video_path, dominant_freq, intensity_series_json, spectrum_json, flag, error_message = row
-    else:
-        status, video_path, dominant_freq, intensity_series_json, spectrum_json, flag = row
-        error_message = None
+    status = row[0]
+    video_path = row[1]
+    dominant_freq = row[2]
+    intensity_series_json = row[3]
+    spectrum_json = row[4]
+    flag = row[5]
+    error_message = row[6] if len(row) >= 7 else None
+    confidence = row[7] if len(row) >= 9 else None
+    amplitude_px = row[8] if len(row) >= 9 else None
+    filename = row[9] if len(row) >= 10 else "Untitled"
+    roi = None
+    if len(row) >= 14 and row[10] is not None:
+        roi = {"x": row[10], "y": row[11], "w": row[12], "h": row[13]}
 
     if status != "done":
         raise HTTPException(
@@ -418,13 +429,21 @@ def get_job_result(job_id: str):
             detail=f"Job is not finished yet (current status: {status})"
         )
 
+    ext = os.path.splitext(filename)[1].lower() if filename != "Untitled" else ".mp4"
+    original_url = f"{job_id}{ext}"
+
     return {
         "job_id": job_id,
+        "filename": filename,
         "amplified_video_url": video_path,
-        "intensity_series": json.loads(intensity_series_json),
+        "original_video_url": original_url,
+        "intensity_series": json.loads(intensity_series_json) if intensity_series_json else None,
         "frequency_spectrum": json.loads(spectrum_json) if spectrum_json else None,
         "dominant_freq_hz": dominant_freq,
         "flag": flag,
+        "confidence": confidence,
+        "amplitude_px": amplitude_px,
+        "roi": roi,
     }
 
 
@@ -435,13 +454,29 @@ def list_jobs():
     rows = db.get_all_jobs()
 
     jobs = []
-    for job_id, created_at, status, flag, dominant_freq_hz in rows:
+    for row in rows:
+        job_id = row[0]
+        created_at = row[1]
+        status = row[2]
+        flag = row[3]
+        dominant_freq_hz = row[4]
+        confidence = row[5] if len(row) >= 7 else None
+        amplitude_px = row[6] if len(row) >= 7 else None
+        
+        # Ensure timestamp is ISO-8601 UTC with 'Z' suffix so browser parses local time accurately
+        ts_str = str(created_at) if created_at else None
+        if ts_str and "T" not in ts_str and not ts_str.endswith("Z"):
+            ts_str = ts_str.replace(" ", "T") + "Z"
+
         jobs.append({
             "job_id": job_id,
-            "timestamp": created_at,
+            "filename": row[7] if len(row) >= 8 else "Untitled",
+            "timestamp": ts_str,
             "status": status,
             "flag": flag,
             "dominant_freq_hz": dominant_freq_hz,
+            "confidence": confidence,
+            "amplitude_px": amplitude_px,
         })
 
     return {"jobs": jobs}

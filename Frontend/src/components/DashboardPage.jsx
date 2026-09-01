@@ -47,20 +47,32 @@ export default function DashboardPage({ onNavigate }) {
   const [search, setSearch]   = useState('');
   const [filter, setFilter]   = useState('all'); // all | detected | clean
 
-  /* ── Fetch jobs ── */
+  /* ── Fetch jobs with real-time live polling ── */
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    const fetchJobs = async (isInitial = false) => {
       try {
+        if (isInitial) setLoading(true);
         const data = await getJobs();
         if (!cancelled) setJobs(data.jobs || []);
       } catch {
         /* silently fail — will show empty state */
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && isInitial) setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+
+    fetchJobs(true);
+
+    const intervalId = setInterval(() => {
+      fetchJobs(false);
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
   }, []);
 
   /* ── Derived stats ── */
@@ -92,11 +104,16 @@ export default function DashboardPage({ onNavigate }) {
     return list;
   }, [jobs, filter, search]);
 
-  /* ── Format timestamp ── */
+  /* ── Format timestamp to local real time ── */
   const fmtDate = (ts) => {
     if (!ts) return '—';
     try {
-      const d = new Date(ts);
+      let isoStr = String(ts);
+      if (!isoStr.includes('T') && !isoStr.endsWith('Z')) {
+        isoStr = isoStr.replace(' ', 'T') + 'Z';
+      }
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return ts;
       return d.toLocaleDateString('en-GB', {
         day: '2-digit', month: 'short', year: 'numeric',
       }) + ' · ' + d.toLocaleTimeString('en-GB', {
@@ -277,7 +294,7 @@ export default function DashboardPage({ onNavigate }) {
         <div className="footer-inner">
           <Logo small onClick={() => onNavigate('landing')} />
           <span className="footer-tagline">
-            Motion Amplification &amp; Vibration Analysis System — SIH 1415
+            Motion Amplification &amp; Vibration Analysis System
           </span>
         </div>
       </footer>
