@@ -30,17 +30,22 @@ export default function ResultsStage({ result, roi, file, originalUrl, onNewAnal
   const spec = result.frequency_spectrum;
   const confidence = result.confidence != null ? Number(result.confidence) : 0;
   const amplitudePx = result.amplitude_px != null ? Number(result.amplitude_px).toFixed(4) : 0;
+  const detailed = result.detailed_report || {};
 
   if (spec && spec.amplitudes && spec.amplitudes.length > 0) {
     const isConfident = isDetected && confidence >= 50.0;
 
     let text = '';
+    if (detailed.high_shake_warning) {
+      text += `⚠ Significant camera shake (${detailed.camera_shake_px} px) was detected and mathematically compensated before analysis. `;
+    }
+
     if (isConfident) {
-      text = `The system confidently detected a distinct periodic motion at ${freqHz} Hz with an estimated sub-pixel amplitude of ${amplitudePx} pixels. The signal exhibits ${confidence.toFixed(1)}% confidence, indicating a clear, sustained vibration rather than random movement or camera shake.`;
+      text += `The system confidently detected a distinct periodic motion at ${freqHz} Hz with an estimated sub-pixel amplitude of ${amplitudePx} pixels. The signal exhibits ${confidence.toFixed(1)}% confidence, indicating a clear, sustained vibration rather than random movement.`;
     } else if (isDetected) {
-      text = `The system detected a potential periodic motion at ${freqHz} Hz, but the confidence score (${confidence.toFixed(1)}%) is relatively low. This suggests a weak vibration or a signal heavily obscured by background noise.`;
+      text += `The system detected a potential periodic motion at ${freqHz} Hz, but the confidence score (${confidence.toFixed(1)}%) is relatively low. This suggests a weak vibration or a signal heavily obscured by background noise.`;
     } else {
-      text = `No significant periodic motion was detected. The highest signal peak did not exceed the confidence threshold, suggesting only random noise, camera shake, or transient movements in the specified frequency band.`;
+      text += `No significant periodic motion was detected. The highest signal peak did not exceed the confidence threshold, suggesting only random noise or transient movements in the specified frequency band.`;
     }
     
     report = { confidence: `${confidence.toFixed(1)}%`, text, isConfident, maxAmp: `${amplitudePx} px` };
@@ -90,16 +95,22 @@ export default function ResultsStage({ result, roi, file, originalUrl, onNewAnal
   };
 
   return (
-    <div className="pt-4 pb-12">
+    <div className="pt-10 pb-12">
 
       {/* ── Header ── */}
       <div className="flex items-start justify-between mb-7 gap-6 flex-wrap">
         <div>
           <div
-            className="uppercase tracking-[0.18em] mb-2"
+            className="uppercase tracking-[0.18em] mb-2 flex items-center gap-2 flex-wrap"
             style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: '#E8741A' }}
           >
-            Analysis Complete
+            <span>Analysis Complete</span>
+            <span style={{ color: '#D1CFCA' }}>•</span>
+            <span style={{ color: '#0D1B2A', textTransform: 'none', fontWeight: 600 }}>
+              {result.filename && !result.filename.toLowerCase().includes('untitle')
+                ? result.filename
+                : file?.name || `video_${(result.job_id || '').slice(0, 8)}.mp4`}
+            </span>
           </div>
 
           {/* Badge + Frequency */}
@@ -189,28 +200,30 @@ export default function ResultsStage({ result, roi, file, originalUrl, onNewAnal
 
         {/* Video module */}
         <div className="rounded-3xl overflow-hidden" style={{ background: '#0D1B2A', boxShadow: '0 8px 32px rgba(13,27,42,0.12)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="relative bg-black flex justify-center items-center" style={{ maxHeight: '550px' }}>
-            <video
-              ref={videoRef}
-              key={videoTab} /* force remount on tab switch */
-              src={videoTab === 'original' ? originalUrl : ampUrl}
-              muted loop playsInline
-              onLoadedMetadata={onVideoLoaded}
-              className="block"
-              style={{ maxWidth: '100%', maxHeight: '550px', objectFit: 'contain' }}
-            />
-
-            {/* ROI overlay (only on original tab, or amplified if coordinates apply) */}
-            {videoReady && videoTab === 'original' && roi.w > 2 && (
-              <ROIRectangle
-                videoRef={videoRef}
-                roi={roi}
-                onRoiChange={() => {}}
-                label="Vibration Zone"
-                color={isDetected ? 'orange' : 'gray'}
-                interactive={false}
+          <div className="bg-black flex justify-center items-center" style={{ maxHeight: '550px' }}>
+            <div className="relative flex" style={{ maxHeight: '550px' }}>
+              <video
+                ref={videoRef}
+                key={videoTab} /* force remount on tab switch */
+                src={videoTab === 'original' ? originalUrl : ampUrl}
+                muted loop playsInline
+                onLoadedMetadata={onVideoLoaded}
+                className="block"
+                style={{ maxWidth: '100%', maxHeight: '550px', objectFit: 'contain' }}
               />
-            )}
+
+              {/* ROI overlay (only on original tab, or amplified if coordinates apply) */}
+              {videoReady && videoTab === 'original' && roi.w > 2 && (
+                <ROIRectangle
+                  videoRef={videoRef}
+                  roi={roi}
+                  onRoiChange={() => {}}
+                  label="Vibration Zone"
+                  color={isDetected ? 'orange' : 'gray'}
+                  interactive={false}
+                />
+              )}
+            </div>
           </div>
 
           {/* Playback controls */}
@@ -286,38 +299,77 @@ export default function ResultsStage({ result, roi, file, originalUrl, onNewAnal
 
       {/* ── Detailed Report ── */}
       {report && (
-        <div className="bg-white border rounded-3xl p-7 mb-7 flex flex-col md:flex-row gap-8 items-start" style={{ borderColor: '#E5E3DC' }}>
-          <div className="flex-1">
-            <h3
-              className="text-xl font-bold mb-3"
-              style={{ fontFamily: "'Playfair Display', serif", color: '#0D1B2A' }}
-            >
-              Analysis Report
-            </h3>
-            <p className="text-base leading-relaxed" style={{ color: '#6B7280' }}>
-              {report.text}
-            </p>
-          </div>
-          
-          <div className="flex gap-6 flex-wrap md:flex-nowrap shrink-0 p-5 rounded-2xl" style={{ background: '#F5F3EE' }}>
-            <div className="flex flex-col gap-1">
-              <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>
-                Confidence
-              </span>
-              <span className="text-xl font-bold" style={{ fontFamily: "'DM Mono', monospace", color: report.isConfident ? '#E8741A' : '#0D1B2A' }}>
-                {report.confidence}
-              </span>
+        <div className="bg-white border rounded-3xl p-7 mb-7 flex flex-col gap-8" style={{ borderColor: '#E5E3DC' }}>
+          <div className="flex flex-col md:flex-row gap-8 items-start">
+            <div className="flex-1">
+              <h3
+                className="text-xl font-bold mb-3"
+                style={{ fontFamily: "'Playfair Display', serif", color: '#0D1B2A' }}
+              >
+                Analysis Report
+              </h3>
+              <p className="text-base leading-relaxed" style={{ color: '#6B7280' }}>
+                {report.text}
+              </p>
             </div>
-            <div className="w-px bg-gray-200" />
-            <div className="flex flex-col gap-1">
-              <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>
-                Peak Amplitude
-              </span>
-              <span className="text-xl font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>
-                {report.maxAmp}
-              </span>
+            
+            <div className="flex gap-6 flex-wrap md:flex-nowrap shrink-0 p-5 rounded-2xl" style={{ background: '#F5F3EE' }}>
+              <div className="flex flex-col gap-1">
+                <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>
+                  Confidence
+                </span>
+                <span className="text-xl font-bold" style={{ fontFamily: "'DM Mono', monospace", color: report.isConfident ? '#E8741A' : '#0D1B2A' }}>
+                  {report.confidence}
+                </span>
+              </div>
+              <div className="w-px bg-gray-200" />
+              <div className="flex flex-col gap-1">
+                <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>
+                  Peak Amplitude
+                </span>
+                <span className="text-xl font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>
+                  {report.maxAmp}
+                </span>
+              </div>
             </div>
           </div>
+
+          {/* New Technical Metrics Grid */}
+          {detailed && Object.keys(detailed).length > 0 && (
+            <div className="pt-6 mt-2 border-t" style={{ borderColor: '#E5E3DC' }}>
+              <h4 className="text-sm font-bold uppercase tracking-wider mb-5" style={{ fontFamily: "'DM Mono', monospace", color: '#9CA3AF' }}>
+                Technical Video Metrics
+              </h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>Resolution</span>
+                  <span className="text-lg font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>{detailed.resolution}</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>Framerate</span>
+                  <span className="text-lg font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>{detailed.fps} FPS</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>Duration</span>
+                  <span className="text-lg font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>{detailed.duration_sec}s</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>SNR</span>
+                  <span className="text-lg font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>{detailed.snr}x</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>Camera Shake</span>
+                  <span className="text-lg font-bold" style={{ fontFamily: "'DM Mono', monospace", color: detailed.high_shake_warning ? '#E8741A' : '#0D1B2A' }}>
+                    {detailed.camera_shake_px} px
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9CA3AF' }}>Total Energy</span>
+                  <span className="text-lg font-bold" style={{ fontFamily: "'DM Mono', monospace", color: '#0D1B2A' }}>{detailed.signal_energy}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

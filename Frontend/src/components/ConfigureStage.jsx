@@ -202,7 +202,9 @@ export default function ConfigureStage({ file, videoUrl, jobId, onProcessing, on
               <span
                 style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: 'rgba(255,255,255,0.3)' }}
               >
-                {file?.name}
+                {file?.name && file.name.toLowerCase() !== 'untitled'
+                  ? file.name
+                  : `video_${(jobId || '').slice(0, 8)}.mp4`}
               </span>
             </div>
 

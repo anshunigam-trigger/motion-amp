@@ -108,11 +108,16 @@ async def upload_video(file: UploadFile = File(...)):
             )
         )
 
-    # --- 3. Sanitize filename for DB storage ---
-    safe_filename = pathlib.Path(file.filename).name  # strips any directory separators
-
-    # --- 4. Stream to disk in chunks with a size ceiling ---
+    # --- 3. Generate job ID ---
     job_id = str(uuid.uuid4())
+
+    # --- 4. Sanitize filename for DB storage ---
+    raw_name = file.filename or ""
+    safe_filename = pathlib.Path(raw_name).name if raw_name else ""
+    if not safe_filename or safe_filename == "." or "untitle" in safe_filename.lower():
+        safe_filename = f"video_{job_id[:8]}{ext}"
+
+    # --- 5. Stream to disk in chunks with a size ceiling ---
     saved_path = os.path.join(UPLOAD_DIR, f"{job_id}{ext}")
 
     CHUNK_SIZE = 1024 * 1024  # 1 MB per chunk
@@ -307,6 +312,7 @@ def run_processing(job_id: str):
             flag=flag,
             confidence=analysis.get("metrics", {}).get("confidence", 0.0),
             amplitude_px=analysis.get("metrics", {}).get("peak_amplitude", 0.0),
+            report_json=json.dumps(analysis.get("detailed_report", {}))
         )
 
         logger.info("Job %s completed — %s @ %.3f Hz", job_id, flag, analysis["metrics"]["dominant_frequency_hz"])
@@ -418,10 +424,11 @@ def get_job_result(job_id: str):
     error_message = row[6] if len(row) >= 7 else None
     confidence = row[7] if len(row) >= 9 else None
     amplitude_px = row[8] if len(row) >= 9 else None
-    filename = row[9] if len(row) >= 10 else "Untitled"
+    filename = row[9] if (len(row) >= 10 and row[9] and row[9].lower() != "untitled") else f"video_{job_id[:8]}.mp4"
     roi = None
     if len(row) >= 14 and row[10] is not None:
         roi = {"x": row[10], "y": row[11], "w": row[12], "h": row[13]}
+    report_json = row[14] if len(row) > 14 else None
 
     if status != "done":
         raise HTTPException(
@@ -429,7 +436,7 @@ def get_job_result(job_id: str):
             detail=f"Job is not finished yet (current status: {status})"
         )
 
-    ext = os.path.splitext(filename)[1].lower() if filename != "Untitled" else ".mp4"
+    ext = os.path.splitext(filename)[1].lower() if "." in filename else ".mp4"
     original_url = f"{job_id}{ext}"
 
     return {
@@ -444,6 +451,7 @@ def get_job_result(job_id: str):
         "confidence": confidence,
         "amplitude_px": amplitude_px,
         "roi": roi,
+        "detailed_report": json.loads(report_json) if report_json else None,
     }
 
 
@@ -462,7 +470,8 @@ def list_jobs():
         dominant_freq_hz = row[4]
         confidence = row[5] if len(row) >= 7 else None
         amplitude_px = row[6] if len(row) >= 7 else None
-        
+        fname = row[7] if (len(row) >= 8 and row[7] and row[7].lower() != "untitled") else f"video_{job_id[:8]}.mp4"
+
         # Ensure timestamp is ISO-8601 UTC with 'Z' suffix so browser parses local time accurately
         ts_str = str(created_at) if created_at else None
         if ts_str and "T" not in ts_str and not ts_str.endswith("Z"):
@@ -470,7 +479,7 @@ def list_jobs():
 
         jobs.append({
             "job_id": job_id,
-            "filename": row[7] if len(row) >= 8 else "Untitled",
+            "filename": fname,
             "timestamp": ts_str,
             "status": status,
             "flag": flag,

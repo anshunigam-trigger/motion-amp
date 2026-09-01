@@ -231,7 +231,11 @@ export default function DashboardPage({ onNavigate }) {
                       <WaveIcon detected={isDetected} />
                     </span>
                     <span className="job-col job-col--name">
-                      <span className="job-filename">{job.filename || 'Untitled'}</span>
+                      <span className="job-filename">
+                        {job.filename && job.filename.toLowerCase() !== 'untitled'
+                          ? job.filename
+                          : `video_${(job.job_id || '').slice(0, 8)}.mp4`}
+                      </span>
                       <span className="job-id">{job.job_id?.slice(0, 8)}</span>
                     </span>
                     <span className="job-col job-col--date">

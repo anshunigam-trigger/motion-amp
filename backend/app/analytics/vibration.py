@@ -274,6 +274,24 @@ def analyze_vibration(
 
     time_axis = [round(i / fps, 4) for i in range(T)]
 
+    # Compute Camera Shake & Extra Metrics for the Detailed Report
+    camera_shake_px = float(np.max(np.linalg.norm(global_motion, axis=1))) if T > 0 else 0.0
+    total_energy = float(np.sum(best_amp_spec**2)) if best_amp_spec is not None else 0.0
+    
+    roi_dict = {"x": roi[0], "y": roi[1], "w": roi[2], "h": roi[3]} if roi else {"x": 0, "y": 0, "w": W, "h": H}
+
+    detailed_report = {
+        "resolution": f"{W}x{H}",
+        "total_frames": T,
+        "fps": round(fps, 2),
+        "duration_sec": round(T / fps, 2),
+        "roi_bounds": roi_dict,
+        "camera_shake_px": round(camera_shake_px, 4),
+        "signal_energy": round(total_energy, 4),
+        "snr": round(best_snr, 3) if best_snr > 0 else 0.0,
+        "high_shake_warning": camera_shake_px > 2.0
+    }
+
     return {
         "metrics": {
             "detected": bool(detected),
@@ -291,4 +309,5 @@ def analyze_vibration(
             "frequencies_hz": [round(float(f), 3) for f in best_freqs] if best_freqs is not None else [],
             "amplitudes": [round(float(a), 5) for a in best_amp_spec] if best_amp_spec is not None else [],
         },
+        "detailed_report": detailed_report
     }

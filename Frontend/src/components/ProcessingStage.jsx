@@ -95,7 +95,9 @@ export default function ProcessingStage({ jobId, fileName, onDone, onFailed }) {
           className="tracking-wider"
           style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: '#9CA3AF' }}
         >
-          {fileName}
+          {fileName && fileName.toLowerCase() !== 'untitled'
+            ? fileName
+            : `video_${(jobId || '').slice(0, 8)}.mp4`}
         </span>
       </div>
     </div>
